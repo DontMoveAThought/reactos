@@ -34,6 +34,12 @@
 #define _ONE 1L
 #endif
 
+#define SRWLOCK_MASK_IN_EXCLUSIVE     0x80000000
+#define SRWLOCK_MASK_EXCLUSIVE_QUEUE  0x7fff0000
+#define SRWLOCK_MASK_SHARED_QUEUE     0x0000ffff
+#define SRWLOCK_RES_EXCLUSIVE         0x00010000
+#define SRWLOCK_RES_SHARED            0x00000001
+
 #define RTL_SRWLOCK_OWNED_BIT   0
 #define RTL_SRWLOCK_CONTENDED_BIT   1
 #define RTL_SRWLOCK_SHARED_BIT  2
@@ -792,4 +798,13 @@ NTAPI
 RtlTryAcquireSRWLockExclusive(PRTL_SRWLOCK SRWLock)
 {
     return InterlockedCompareExchangePointer(&SRWLock->Ptr, (ULONG_PTR*)RTL_SRWLOCK_OWNED, 0) == 0;
+}
+
+/***********************************************************************
+ *              RtlQueryPerformanceCounter (NTDLL.@)
+ */
+BOOLEAN WINAPI RtlQueryPerformanceCounter(OUT PLARGE_INTEGER PerformanceCounter)
+{
+    NtQueryPerformanceCounter(PerformanceCounter, NULL);
+    return TRUE;
 }
