@@ -10,11 +10,16 @@
 #include <k32_vista.h>
 
 #if _WIN32_WINNT != _WIN32_WINNT_VISTA
-#error "This file must be compiled with _WIN32_WINNT == _WIN32_WINNT_VISTA"
+//#error "This file must be compiled with _WIN32_WINNT == _WIN32_WINNT_VISTA"
 #endif
 
 // This is defined only in ntifs.h
 #define REPARSE_DATA_BUFFER_HEADER_SIZE   FIELD_OFFSET(REPARSE_DATA_BUFFER, GenericReparseBuffer)
+
+NTSYSAPI
+LONG
+WINAPI
+RtlCompareUnicodeStrings(const WCHAR*, SIZE_T, const WCHAR*, SIZE_T, BOOLEAN);
 
 #define NDEBUG
 #include <debug.h>
@@ -204,6 +209,29 @@ RegisterApplicationRestart(IN PCWSTR pwzCommandline  OPTIONAL,
 {
     UNIMPLEMENTED;
     return E_FAIL;
+}
+
+
+/******************************************************************************
+ *	CompareStringOrdinal   (kernelbase.@)
+ */
+INT WINAPI DECLSPEC_HOTPATCH CompareStringOrdinal( const WCHAR *str1, INT len1,
+                                                   const WCHAR *str2, INT len2, BOOL ignore_case )
+{
+    int ret;
+
+    if (!str1 || !str2)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+    if (len1 < 0) len1 = lstrlenW( str1 );
+    if (len2 < 0) len2 = lstrlenW( str2 );
+
+    ret = RtlCompareUnicodeStrings( str1, len1, str2, len2, ignore_case );
+    if (ret < 0) return CSTR_LESS_THAN;
+    if (ret > 0) return CSTR_GREATER_THAN;
+    return CSTR_EQUAL;
 }
 
 
@@ -446,24 +474,142 @@ CreateSymbolicLinkA(IN LPCSTR lpSymlinkFileName,
 
 
 /*
- * @unimplemented
+ * @implemented
  */
 DWORD
 WINAPI
-GetFinalPathNameByHandleW(IN HANDLE hFile,
-                          OUT LPWSTR lpszFilePath,
-                          IN DWORD cchFilePath,
-                          IN DWORD dwFlags)
+GetFinalPathNameByHandleW(HANDLE file, LPWSTR path, DWORD count, DWORD flags)
 {
-    if (dwFlags & ~(VOLUME_NAME_DOS | VOLUME_NAME_GUID | VOLUME_NAME_NT |
-                    VOLUME_NAME_NONE | FILE_NAME_NORMALIZED | FILE_NAME_OPENED))
+    WCHAR buffer[sizeof(OBJECT_NAME_INFORMATION) + MAX_PATH + 1];
+    OBJECT_NAME_INFORMATION *info = (OBJECT_NAME_INFORMATION*)&buffer;
+    WCHAR drive_part[MAX_PATH];
+    DWORD drive_part_len = 0;
+    NTSTATUS status;
+    DWORD result = 0;
+    ULONG dummy;
+    WCHAR *ptr;
+
+    DPRINT( "(%p,%p,%d,%x)\n", file, path, count, flags );
+
+    if (flags & ~(FILE_NAME_OPENED | VOLUME_NAME_GUID | VOLUME_NAME_NONE | VOLUME_NAME_NT))
     {
-        SetLastError(ERROR_INVALID_PARAMETER);
+        DPRINT1("Unknown flags: %x\n", flags);
+        SetLastError( ERROR_INVALID_PARAMETER );
         return 0;
     }
 
-    UNIMPLEMENTED;
-    return 0;
+    /* get object name */
+    status = NtQueryObject( file, ObjectNameInformation, &buffer, sizeof(buffer) - sizeof(WCHAR), &dummy );
+    if (!NT_SUCCESS( status )) return 0;
+
+    if (!info->Name.Buffer)
+    {
+        SetLastError( ERROR_INVALID_HANDLE );
+        return 0;
+    }
+    if (info->Name.Length < 4 * sizeof(WCHAR) || info->Name.Buffer[0] != '\\' ||
+        info->Name.Buffer[1] != '?' || info->Name.Buffer[2] != '?' || info->Name.Buffer[3] != '\\' )
+    {
+        DPRINT1("Unexpected object name: %s\n", info->Name.Buffer, info->Name.Length / sizeof(WCHAR));
+        SetLastError( ERROR_GEN_FAILURE );
+        return 0;
+    }
+
+    /* add terminating null character, remove "\\??\\" */
+    info->Name.Buffer[info->Name.Length / sizeof(WCHAR)] = 0;
+    info->Name.Length -= 4 * sizeof(WCHAR);
+    info->Name.Buffer += 4;
+
+    /* FILE_NAME_OPENED is not supported yet, and would require Wineserver changes */
+    if (flags & FILE_NAME_OPENED)
+    {
+        DPRINT1("FILE_NAME_OPENED not supported\n");
+        flags &= ~FILE_NAME_OPENED;
+    }
+
+    /* Get information required for VOLUME_NAME_NONE, VOLUME_NAME_GUID and VOLUME_NAME_NT */
+    if (flags == VOLUME_NAME_NONE || flags == VOLUME_NAME_GUID || flags == VOLUME_NAME_NT)
+    {
+        if (!GetVolumePathNameW( info->Name.Buffer, drive_part, MAX_PATH )) return 0;
+        drive_part_len = lstrlenW(drive_part);
+        if (!drive_part_len || drive_part_len > lstrlenW(info->Name.Buffer) ||
+            drive_part[drive_part_len-1] != '\\' ||
+            CompareStringOrdinal( info->Name.Buffer, drive_part_len, drive_part, drive_part_len, TRUE ) != CSTR_EQUAL)
+        {
+            DPRINT1( "Path %s returned by GetVolumePathNameW does not match file path %s\n",
+                   drive_part, info->Name.Buffer );
+            SetLastError( ERROR_GEN_FAILURE );
+            return 0;
+        }
+    }
+
+    if (flags == VOLUME_NAME_NONE)
+    {
+        ptr = info->Name.Buffer + drive_part_len - 1;
+        result = lstrlenW(ptr);
+        if (result < count) memcpy(path, ptr, (result + 1) * sizeof(WCHAR));
+        else result++;
+    }
+    else if (flags == VOLUME_NAME_GUID)
+    {
+        WCHAR volume_prefix[51];
+
+        /* GetVolumeNameForVolumeMountPointW sets error code on failure */
+        if (!GetVolumeNameForVolumeMountPointW( drive_part, volume_prefix, 50 )) return 0;
+        ptr = info->Name.Buffer + drive_part_len;
+        result = lstrlenW(volume_prefix) + lstrlenW(ptr);
+        if (result < count)
+        {
+            lstrcpyW(path, volume_prefix);
+            lstrcatW(path, ptr);
+        }
+        else
+        {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            result++;
+        }
+    }
+    else if (flags == VOLUME_NAME_NT)
+    {
+        WCHAR nt_prefix[MAX_PATH];
+
+        /* QueryDosDeviceW sets error code on failure */
+        drive_part[drive_part_len - 1] = 0;
+        if (!QueryDosDeviceW( drive_part, nt_prefix, MAX_PATH )) return 0;
+        ptr = info->Name.Buffer + drive_part_len - 1;
+        result = lstrlenW(nt_prefix) + lstrlenW(ptr);
+        if (result < count)
+        {
+            lstrcpyW(path, nt_prefix);
+            lstrcatW(path, ptr);
+        }
+        else
+        {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            result++;
+        }
+    }
+    else if (flags == VOLUME_NAME_DOS)
+    {
+        result = 4 + lstrlenW(info->Name.Buffer);
+        if (result < count)
+        {
+            lstrcpyW(path, L"\\\\?\\");
+            lstrcatW(path, info->Name.Buffer);
+        }
+        else
+        {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            result++;
+        }
+    }
+    else
+    {
+        /* Windows crashes here, but we prefer returning ERROR_INVALID_PARAMETER */
+        DPRINT1("Invalid combination of flags: %x\n", flags);
+        SetLastError( ERROR_INVALID_PARAMETER );
+    }
+    return result;
 }
 
 
@@ -586,7 +732,6 @@ OpenFileById(IN HANDLE hFile,
 }
 
 
-
 /*
   Vista+ MUI support functions
 
@@ -633,10 +778,23 @@ GetFileMUIPath(
     return FALSE;
 }
 
+
+/******************************************************************************
+ *           ResolveLocaleName (KERNEL32.@)
+ */
+
+INT WINAPI ResolveLocaleName(LPCWSTR name, LPWSTR localename, INT len)
+{
+    //FIXME("stub: %s, %p, %d\n", wine_dbgstr_w(name), localename, len);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
+}
+
 /*
  * @unimplemented
  */
-#if 0 // This is Windows 7+
+#if 1 // This is Windows 7+
 BOOL
 WINAPI
 GetProcessPreferredUILanguages(
@@ -654,7 +812,7 @@ GetProcessPreferredUILanguages(
 /*
 * @unimplemented
 */
-BOOL
+/*BOOL
 WINAPI
 GetSystemPreferredUILanguages(
     DWORD dwFlags,
@@ -665,12 +823,12 @@ GetSystemPreferredUILanguages(
     DPRINT1("%x %p %p %p\n", dwFlags, pulNumLanguages, pwszLanguagesBuffer, pcchLanguagesBuffer);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
-}
+}*/
 
 /*
  * @unimplemented
  */
-BOOL
+/*BOOL
 WINAPI
 GetThreadPreferredUILanguages(
     DWORD dwFlags,
@@ -681,7 +839,7 @@ GetThreadPreferredUILanguages(
     DPRINT1("%x %p %p %p\n", dwFlags, pulNumLanguages, pwszLanguagesBuffer, pcchLanguagesBuffer);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
-}
+}*/
 
 /*
  * @unimplemented
@@ -716,7 +874,7 @@ GetUILanguageInfo(
 /*
  * @unimplemented
  */
-BOOL
+/*BOOL
 WINAPI
 GetUserPreferredUILanguages(
     DWORD dwFlags,
@@ -727,12 +885,12 @@ GetUserPreferredUILanguages(
     DPRINT1("%x %p %p %p\n", dwFlags, pulNumLanguages, pwszLanguagesBuffer, pcchLanguagesBuffer);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
-}
+}*/
 
 /*
  * @unimplemented
  */
-#if 0 // Tis is Windows 7+
+#if 1 // This is Windows 7+
 BOOL
 WINAPI
 SetProcessPreferredUILanguages(
@@ -749,7 +907,7 @@ SetProcessPreferredUILanguages(
 /*
  * @unimplemented
  */
-BOOL
+/*BOOL
 WINAPI
 SetThreadPreferredUILanguages(
     DWORD dwFlags,
@@ -760,5 +918,5 @@ SetThreadPreferredUILanguages(
     DPRINT1("%x %p %p\n", dwFlags, pwszLanguagesBuffer, pulNumLanguages);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
-}
+}*/
 

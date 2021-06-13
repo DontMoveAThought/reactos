@@ -86,7 +86,7 @@ CreateFileMappingW(HANDLE hFile,
         DesiredAccess |= SECTION_MAP_EXECUTE;
     }
     else if ((flProtect == PAGE_EXECUTE_WRITECOPY) &&
-             (NtCurrentPeb()->OSMajorVersion >= 6))
+             (NtCurrentPeb()->OSMajorVersion > 6))
     {
         /* Give it */
         DesiredAccess |= (SECTION_MAP_WRITE | SECTION_MAP_EXECUTE);
@@ -316,7 +316,7 @@ OpenFileMappingW(IN DWORD dwDesiredAccess,
     InitializeObjectAttributes(&ObjectAttributes,
                                &UnicodeName,
                                (bInheritHandle ? OBJ_INHERIT : 0),
-                               BaseGetNamedObjectDirectory(),
+                               BasepGetNamedObjectDirectory(),
                                NULL);
 
     /* Convert COPY to READ */

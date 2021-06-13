@@ -1,5 +1,7 @@
 
 @ stdcall InitOnceExecuteOnce(ptr ptr ptr ptr)
+@ stdcall InitOnceBeginInitialize(ptr long ptr ptr)
+@ stdcall InitOnceComplete(ptr long ptr)
 @ stdcall GetFileInformationByHandleEx(long long ptr long)
 @ stdcall -ret64 GetTickCount64()
 
@@ -21,6 +23,7 @@
 @ stdcall ApplicationRecoveryInProgress(ptr)
 @ stdcall CreateSymbolicLinkA(str str long)
 @ stdcall CreateSymbolicLinkW(wstr wstr long)
+@ stdcall CompareStringOrdinal(wstr long wstr long long)
 @ stdcall GetApplicationRecoveryCallback(ptr ptr ptr ptr ptr)
 @ stdcall GetApplicationRestart(ptr wstr ptr ptr)
 @ stdcall GetFileBandwidthReservation(ptr ptr ptr ptr ptr ptr)
@@ -31,6 +34,7 @@
 @ stdcall GetSystemPreferredUILanguages(long ptr wstr ptr)
 @ stdcall GetThreadPreferredUILanguages(long ptr wstr ptr)
 @ stdcall GetThreadUILanguage()
+;@ stdcall GetQueuedCompletionStatusEx(ptr ptr long ptr long long)
 @ stdcall GetUILanguageInfo(long wstr wstr ptr ptr)
 @ stdcall GetUserPreferredUILanguages(long ptr wstr ptr)
 @ stdcall OpenFileById(ptr ptr long long ptr long)
@@ -38,5 +42,6 @@
 @ stdcall QueryFullProcessImageNameW(ptr long wstr ptr)
 @ stdcall RegisterApplicationRecoveryCallback(ptr ptr long long)
 @ stdcall RegisterApplicationRestart(wstr long)
+@ stdcall ResolveLocaleName(ptr ptr long)
 @ stdcall SetFileBandwidthReservation(ptr long long long ptr ptr)
 @ stdcall SetThreadPreferredUILanguages(long wstr ptr)
