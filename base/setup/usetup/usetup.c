@@ -1022,6 +1022,14 @@ UpgradeRepairPage(PINPUT_RECORD Ir)
 #endif
         else
         {
+            if (Ir->Event.KeyEvent.wVirtualKeyCode == VK_RETURN)
+            {
+                RestoreGenericListUiState(&ListUi);
+                // return nextPage;    // prevPage;
+
+                // return INSTALL_INTRO_PAGE;
+                return DEVICE_SETTINGS_PAGE;
+            }
             // switch (toupper(Ir->Event.KeyEvent.uChar.AsciiChar))
             // if (Ir->Event.KeyEvent.uChar.AsciiChar == 0x0D) /* ENTER */
             if (toupper(Ir->Event.KeyEvent.uChar.AsciiChar) == 'U')  /* U */
@@ -4255,7 +4263,7 @@ ProgressCountdown(
                                       10,
                                       24,
                                       TRUE,
-                                      FOREGROUND_RED | BACKGROUND_BLUE,
+                                      FOREGROUND_RED | BACKGROUND_CYAN,
                                       0,
                                       NULL,
                                       MUIGetString(STRING_REBOOTPROGRESSBAR),
